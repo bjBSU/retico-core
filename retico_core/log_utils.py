@@ -20,6 +20,7 @@ import os
 import json
 from pathlib import Path
 import re
+import subprocess
 import threading
 import time
 import matplotlib
@@ -35,7 +36,7 @@ import requests
 # Loggers & Functions
 #####################
 
-class ServerWriter:
+class ServerWriter():
     "Custom writer class that directly logs messages and sends via WebSockets"
 
     def __init__(self, server_port: str):
@@ -46,19 +47,27 @@ class ServerWriter:
         try:
             self.sio.connect(self.server_port)
             print(f"Connected to WebSocket server at {self.server_port}")
-            self.write('hello')
         except Exception as e:
             print(f"Failed to connect to websocket server: {e}")
-
 
     def write(self, message):
         """Sends the log message to the node.js server"""
         try:
+            time.sleep(5)
             self.sio.emit("server_logger", message)
             print("Message sent to server")
 
         except Exception as e:
             print(f"Error sending log via websocket: {e}")
+
+    def msg(self, message):
+        self.sio.emit("server_logger", message)
+
+    def info(self, message):
+        self.write(message)
+
+    def warning(self, message):
+        self.write(message)
 
     def flush(self):
         pass
@@ -138,31 +147,54 @@ class FileLogger(structlog.BoundLogger):
 class ServerLogger(structlog.BoundLogger):
     """Dectorator / Singleton class of structlog.BoundLogger, that is used to configure / initialize
     once the file logger for the whole system."""
+    # #start up the node.js server
+    # subprocess.call('node ../vis_tool_angular_&_node/retico-core/retico_core/server.js')
 
     def __new__(cls, server_port='http://localhost:3000'): 
         if not hasattr(cls, "instance"):
             if not server_port:
                 raise ValueError("A valid server URL must be provided")
-            sw = ServerWriter(server_port)
-            # configure structlog to have a JSON logger
-            structlog.configure(
+                
+            # following https://www.structlog.org/en/stable/bound-loggers.html
+            server_logger = structlog.wrap_logger(
+                ServerWriter(server_port),
+                wrapper_class=structlog.BoundLogger,
                 processors=[
                     structlog.processors.add_log_level,
                     structlog.processors.TimeStamper(fmt="iso"),
                     structlog.processors.ExceptionRenderer(),
-                    structlog.processors.JSONRenderer(),
-                    sw.write
+                    structlog.processors.JSONRenderer()
                 ],
-                logger_factory=structlog.WriteLoggerFactory(
-                    file=sw
-                ),
-                cache_logger_on_first_use=True,
             )
 
-            server_logger = structlog.get_logger("server_logger")
+            # configure structlog to have a JSON logger
+            # structlog.configure(
+            #     processors=[
+            #         structlog.processors.add_log_level,
+            #         structlog.processors.TimeStamper(fmt="iso"),
+            #         structlog.processors.ExceptionRenderer(),
+            #         structlog.processors.JSONRenderer()
+            #     ],
+            #     logger_factory=structlog.stdlib.BoundLogger,
+            #     cache_logger_on_first_use=True,
+            # )
+
+            #server_logger = structlog.get_logger("server_logger")
+
             cls.instance = server_logger
 
         return cls.instance
+    
+def start_node_server(script_path:str, port: int):
+    """Start the node.js server if not already running"""
+    try:
+        requests.get(f"http://localhost.{port}")
+        print("Node.js server is already running")
+    except requests.ConnectionError:
+        print("Starting Node.js server...")
+        subprocess.Popen(['node', script_path])
+        #wait for server to spin up
+        time.sleep(3)
 
 
 
@@ -198,6 +230,8 @@ def configurate_logger(log_path="logs/run", filters=None, server_port='http://lo
     log_path = create_new_log_folder(log_path)
     terminal_logger = TerminalLogger(filters=filters)
     file_logger = FileLogger(log_path)
+
+    start_node_server('../vis_tool_angular_&_node/retico-core/retico_core/server.js', 3000)
     server_logger = ServerLogger(server_port)
     return terminal_logger, file_logger, server_logger
 
@@ -851,4 +885,3 @@ if __name__ == "__main__":
 # server_port = "http://localhost:3000/logs"
 # server_logger = ServerLogger(server_port)
 # server_logger.info("This is a log message sent to Node.js")
-
