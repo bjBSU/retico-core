@@ -500,6 +500,9 @@ class AbstractModule:
 
         self.current_input = []
         self.current_output = []
+        self.next_modules = []
+        self.previous_modules = []
+
 
         self.meta_data = {}
         if meta_data:
@@ -683,6 +686,7 @@ class AbstractModule:
         else:
             self.file_logger.info("append UM")
 
+
     def subscribe(self, module, q=None):
         """Subscribe a module to the queue.
 
@@ -700,6 +704,15 @@ class AbstractModule:
             q = self.queue_class(self, module)
             module.add_left_buffer(q)
         self._right_buffers.append(q)
+
+        self.next_modules.append(module)
+        module.previous_modules.append(self)
+
+        args = {
+                "previous_modules" : self.previous_modules,
+                "next_modules" : self.next_modules
+            }
+        self.server_logger.msg("modules", **args)
         return q
 
     def remove_from_rb(self, module):
